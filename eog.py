@@ -9,6 +9,12 @@ from threading import Thread
 from time import sleep
 from typing import Union
 
+import asyncio
+from bleak import BleakScanner, BleakClient, BLEDevice
+import time
+import ctypes
+import struct
+
 from PyQt5.QtWidgets import *
 from pglive.kwargs import Axis
 from pglive.sources.data_connector import DataConnector
@@ -25,7 +31,9 @@ TIMEOUT_SERIAL = 2
 # Graphing Variables
 EVENT_QUEUE_SIZE = 10
 MATCH_QUEUE_SIZE = 10
-BUFFER_SIZE = 100
+BUFFER_SIZE = 128
+DATA_GROUPS = 4
+NUM_BUFFER_TYPES = 13
 EPOCH_PERIOD = 1000
 
 # What Type of EOG signal
@@ -239,29 +247,70 @@ class Signal():
             self.negStateIncrement = 0
             self.posStateIncrement = 0
 
+
+sleepMask = None
+UUID_MANUFACTURER = "00002a29-0000-1000-8000-00805f9b34fb"
+UUID_MODEL_NUMBER = "00002a24-0000-1000-8000-00805f9b34fb"
+UUID_SERIAL_NUMBER = "00002a25-0000-1000-8000-00805f9b34fb"
+UUID_FIRMWARE_REVISION ="00002a26-0000-1000-8000-00805f9b34fb"
+
+UUID_BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"
+
+UUID_MASK_READ = "00000011-0000-1000-8000-00805f9b34fb"
+UUID_MASK_CMD = "00000021-0000-1000-8000-00805f9b34fb"
+
+
+# Sleep Executive Command
+CMD_START_BURST_READ = bytearray(b'\x00')
+CMD_PEAK_BUFFER = bytearray(b'\x01')
+CMD_LED_CONTROL = bytearray(b'\x02')
+CMD_TOGGLE_SAMPLING = bytearray(b'\x03')
+
+# Mask Data Buffers
+# EOG
+BUFFER_EOGH = bytearray(b'\x00')
+BUFFER_SYNC = bytearray(b'\x00')
+BUFFER_EOGV = bytearray(b'\x01')
+# ACCEL
+BUFFER_AX = bytearray(b'\x02')
+BUFFER_AY = bytearray(b'\x03')
+BUFFER_AZ = bytearray(b'\x04')
+# HBM
+BUFFER_RED  = bytearray(b'\x05')
+BUFFER_IR = bytearray(b'\x06')
+# FNIRS
+BUFFER_FNIRS_RED_6  = bytearray(b'\x07')
+BUFFER_FNIRS_RED_25  = bytearray(b'\x08')
+BUFFER_FNIRS_IR_6 = bytearray(b'\x09')
+BUFFER_FNIRS_IR_25 = bytearray(b'\x0a')
+BUFFER_FNIRS_AMB_6 = bytearray(b'\x0b')
+BUFFER_FNIRS_AMB_25 = bytearray(b'\x0c')
+
 class Window(QWidget):
     running = False
 
-    eogx_signal = None
-    eogy_signal = None
-
     eogx = collections.deque(maxlen=BUFFER_SIZE)
     eogy = collections.deque(maxlen=BUFFER_SIZE)
+    ax_signal = collections.deque(maxlen=BUFFER_SIZE)
+    ay_signal = collections.deque(maxlen=BUFFER_SIZE)
+    az_signal = collections.deque(maxlen=BUFFER_SIZE)
+    fnirsRed6 = collections.deque(maxlen=BUFFER_SIZE)
+    fnirsRed25 = collections.deque(maxlen=BUFFER_SIZE)
+    fnirsInfared6 = collections.deque(maxlen=BUFFER_SIZE)
+    fnirsInfared25 = collections.deque(maxlen=BUFFER_SIZE)
+    fnirsAmbient6 = collections.deque(maxlen=BUFFER_SIZE)
+    fnirsAmbient25 = collections.deque(maxlen=BUFFER_SIZE)
+    heartRed = collections.deque(maxlen=BUFFER_SIZE)
+    heartIR = collections.deque(maxlen=BUFFER_SIZE)
 
     events = []
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QGridLayout(self)
+        layout = QVBoxLayout(self)
 
         eogx_plot = LiveLinePlot(pen="blue")
         eogy_plot = LiveLinePlot(pen="orange")
-
-        self.eogx_signal = Signal(SignalMode.DIFFERENTIAL_WITH_HYSTER.value, 1600, 0, 3100, 1300, 2000)
-        self.eogy_signal = Signal(SignalMode.DIFFERENTIAL_WITH_HYSTER.value, 1600, 0, 3100, 1300, 2000)
-
-        self.eogx_signal.setHyster(10, 10)
-        self.eogy_signal.setHyster(10, 10)
 
         # Data connectors for each plot with dequeue of 600 points
 
@@ -282,24 +331,10 @@ class Window(QWidget):
 
         self.chart_view.addItem(eogx_plot)
         self.chart_view.addItem(eogy_plot)
-
-        # Create Detection button 
-        self.start_button = QPushButton("Detect")
-        self.start_button.clicked.connect(self.start_button_clicked)
-
         # using -1 to span through all rows available in the window
-        layout.addWidget(self.chart_view, 0, 0, 0, 2)
-        layout.addWidget(self.start_button, 3, 0, 1, 2)
+        layout.addWidget(self.chart_view)
 
-    def start_button_clicked(self):
-        if(self.eogx_signal.isDetecting == False):
-            self.eogx_signal.isDetecting = True
-            self.eogy_signal.isDetecting = True
-        else:
-            self.eogx_signal.isDetecting = False
-            self.eogy_signal.isDetecting = False
-
-    def update(self):
+    async def update(self):
         """Generate data at 60Hz"""
         while self.running:
             timestamp = time.time()
@@ -307,16 +342,10 @@ class Window(QWidget):
             eogy_p = 0
             try:
                 eogx_p = int(self.eogx.pop())
-                self.eogx_signal.updateSignal(eogx_p)
                 eogy_p = int(self.eogy.pop())
-                self.eogy_signal.updateSignal(eogy_p)
             except Exception as e:
-                print(str(e))
-
-            try:
-                print(self.eogx_signal.match_queue.pop())
-            except:
                 pass
+                #print(str(e))
             self.eogx_connector.cb_append_data_point(eogx_p, timestamp)
             self.eogy_connector.cb_append_data_point(eogy_p, timestamp)
             sleep(1/60)
@@ -324,22 +353,75 @@ class Window(QWidget):
     def start_app(self):
         """Start Thread generator"""
         self.running = True
-        Thread(target=self.update).start()
-        Thread(target=self.serial_stream).start()
+        asyncio.run(self.update())
+        #asyncio.run(self.ble_stream())
 
-    def serial_stream(self):
-        serialPort = serial.Serial(port="COM3", baudrate=BAUD_RATE, bytesize=BYTE_SIZE, timeout=TIMEOUT_SERIAL, stopbits=serial.STOPBITS_ONE)
-        serialString = ""  # Used to hold data coming over UART
-        while 1:
-            # Wait until there is data waiting in the serial buffer
-            if serialPort.in_waiting > 0:
-                # Read data out of the buffer until a carraige return / new line is found
-                serialString = serialPort.readline()
-                # Print the contents of the serial data
-                numbers = [int(num) for num in re.findall(r'\d+', serialString.decode("ascii"))]
-                if(len(numbers) == 2):
-                    self.eogx.append(int(numbers[0]))
-                    self.eogy.append(int(numbers[1]))
+    async def toggleSampling(self, client):
+        await client.write_gatt_char(UUID_MASK_CMD, CMD_TOGGLE_SAMPLING, response=False)
+        return_code = await client.read_gatt_char(UUID_MASK_CMD)
+        print(f"CMD_TOGGLE_SAMPLING: {return_code}")
+
+    async def readBufferDecom(self, buf_type, client, printing=False):
+        await client.write_gatt_char(UUID_MASK_CMD, (CMD_START_BURST_READ + buf_type), response=False)
+        return_code = await client.read_gatt_char(UUID_MASK_CMD)
+        if(printing):
+            print(f"CMD_START_BURST_READ: {return_code}")
+        buffersize = int.from_bytes((await client.read_gatt_char(UUID_MASK_READ)), "little", signed="False")
+        if(printing):
+            print(f"Current Queue Size: {buffersize}")
+        ret = []
+        for x in range(0,buffersize):
+            buffer = await client.read_gatt_char(UUID_MASK_READ)
+            if(printing):
+                print(f"Buffer {x}: {buffer}")
+                print(f"Buffer Length {x}: {str(len(buffer))}")
+            ret.append(struct.unpack('53I', buffer))
+        return buffersize, ret # Return how many structs there are and the structs
+
+    async def ble_stream(self):
+        devices = await BleakScanner.discover()
+        for d in devices:
+            if(d.name == "Hypnogogia Mask"):
+                print("Found Sleep Mask!")
+                sleepMask = d
+        
+        print("Trying to connect...")
+        async with BleakClient(sleepMask.address) as client:
+            print("Connected!")
+            print("          ")
+
+            print("Pairing!")
+            print("          ")
+
+            try:
+                await client.pair()
+            except:
+                print("Could not pair. Exiting... ")
+                return
+            
+            model_number = await client.read_gatt_char(UUID_MODEL_NUMBER)
+            manufacturer = await client.read_gatt_char(UUID_MANUFACTURER)
+            firmware_version = await client.read_gatt_char(UUID_FIRMWARE_REVISION)
+            serial_number = await client.read_gatt_char(UUID_SERIAL_NUMBER)
+            battery_level = await client.read_gatt_char(UUID_BATTERY_LEVEL)
+
+            print("=====DEVICE INFO=====")
+            print("Model Number: {0}".format("".join(map(chr, model_number))))
+            print("Manufacturer: {0}".format("".join(map(chr, manufacturer))))
+            print("Firmware Version: {0}".format("".join(map(chr, firmware_version))))
+            print("Serial Number: {0}".format("".join(map(chr, serial_number))))
+            print("Current Battery Level: {0}".format("".join(map(chr, battery_level))))
+            print("=====================")
+            print(" ")
+            
+            await self.toggleSampling(client)
+
+            while(1):
+                bufferLen, data = await self.readBufferDecom(BUFFER_SYNC, client)
+                for packet in range(0, bufferLen):
+                    for group in range(0, DATA_GROUPS):                        
+                        self.eogx.append(int(data[packet][1 + (NUM_BUFFER_TYPES * group)]))
+                        self.eogy.append(int(data[packet][2 + (NUM_BUFFER_TYPES * group)]))
 
 
 
@@ -350,8 +432,6 @@ if __name__ == '__main__':
    window.show()
    window.start_app()
    app.exec()
-   window.running = False
-
 
 
 
