@@ -10,8 +10,8 @@ const Layout = (props: any) => {
   return (
     <>
       <Head>
-        <title>Data Dashboard</title>
-        <meta name="description" content="Data Dashboard" />
+        <title>My Sleep Lab</title>
+        <meta name="description" content="My Sleep Lab" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>

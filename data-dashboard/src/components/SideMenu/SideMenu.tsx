@@ -26,6 +26,10 @@ import Person2Icon from "@mui/icons-material/Person2";
 import Settings from "@mui/icons-material/Settings";
 import ExitToAppIcon from "@mui/icons-material/ExitToApp";
 import EqualizerIcon from "@mui/icons-material/Equalizer";
+import MonitorHeartIcon from "@mui/icons-material/MonitorHeart";
+import BookIcon from "@mui/icons-material/Book";
+import GroupsIcon from "@mui/icons-material/Groups";
+import DevicesIcon from "@mui/icons-material/Devices";
 import NextLink from "next/link";
 import { signOut } from "next-auth/react";
 
@@ -52,17 +56,32 @@ const closedMixin = (theme: Theme): CSSObject => ({
   },
 });
 
-const menuRouteList = ["", "data", "profile", "settings", ""];
+const menuRouteList = [
+  "",
+  "data",
+  "journal",
+  "lab",
+  "devices",
+  "profile",
+  "settings",
+  "",
+];
 const menuListTranslations = [
   "Home",
-  "Data",
+  "My Sleep Data",
+  "Journal",
+  "My Lab",
+  "Devices",
   "Profile",
   "Settings",
   "Sign Out",
 ];
 const menuListIcons = [
   <HomeIcon></HomeIcon>,
-  <EqualizerIcon></EqualizerIcon>,
+  <MonitorHeartIcon></MonitorHeartIcon>,
+  <BookIcon></BookIcon>,
+  <GroupsIcon></GroupsIcon>,
+  <DevicesIcon></DevicesIcon>,
   <Person2Icon></Person2Icon>,
   <Settings></Settings>,
   <ExitToAppIcon></ExitToAppIcon>,

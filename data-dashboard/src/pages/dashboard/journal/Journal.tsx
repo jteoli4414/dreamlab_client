@@ -1,11 +1,18 @@
-import { TextField, Typography } from "@mui/material";
 import React, { useState } from "react";
-import { Box, Checkbox, FormControlLabel, Button, Avatar } from "@mui/material";
+import {
+  Typography,
+  Box,
+  Paper,
+  Grid,
+  Avatar,
+  TextField,
+  FormControlLabel,
+  Checkbox,
+  Button,
+} from "@mui/material";
 import { useSession } from "next-auth/react";
-import Paper from "@mui/material/Paper";
-import Grid from "@mui/material/Grid";
 
-function Profile() {
+const Journal = () => {
   const { data: session } = useSession();
   const names = session?.user?.name ? session.user.name.split(" ") : [];
   const firstName = names[0];
@@ -36,12 +43,8 @@ function Profile() {
 
   return (
     <>
-      <h1>Profile</h1>
+      <h1>{session ? session?.user?.name + "'s" : "My "} Dream Journal</h1>
       <Box>
-        <Typography variant={"h4"} sx={{ paddingBottom: 4 }}>
-          Hey {session ? session?.user?.name : "User"}, welcome to your profile
-          👋
-        </Typography>
         <Paper sx={{ padding: "1rem 2rem" }}>
           <Grid container justifyContent="center">
             <Grid item xs={12} sm={8} md={6}>
@@ -139,6 +142,6 @@ function Profile() {
       </Box>
     </>
   );
-}
+};
 
-export default Profile;
+export default Journal;
